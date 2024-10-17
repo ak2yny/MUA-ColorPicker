@@ -3,13 +3,12 @@ from tkinter import colorchooser, font, messagebox, ttk
 from colorsys import rgb_to_hls, hls_to_rgb
 from ctypes import windll
 from pathlib import Path
-from PIL import ImageColor
 
 windll.shcore.SetProcessDpiAwareness(2)
 
 
 # import settings > which includes initial color, etc.
-SAVED_COLOR = '#FFFFFF'
+SAVED_COLOR = 'white'
 STD_SHADES = [0.9, 0.8, 0.7, 0.4, 0.3]
 STD_COLORS = [
     '#FF0000', '#FFC000', '#FFFF00', '#00B050',
@@ -22,13 +21,13 @@ OUTSIDERS_COLORS = [
 
 def color_to_model(c, inmodel=None, outmodel='hex'):
     if inmodel == outmodel: return c
-    h = c[1:] if inmodel == 'hex' else f'{int(c):#08x}'[2:] if inmodel == 'dec' else bytes.fromhex(f'{int(c):#08x}'[2:])[::-1].hex() if inmodel == 'rdec' else f'{c[0]:02x}{c[1]:02x}{c[2]:02x}' if inmodel == 'rgb' else hsl_to_hex(*c)[1:] if inmodel == 'hsl' else color_to_hex(c)[1:]
+    h = c[1:] if inmodel == 'hex' else f'{int(c):#08x}'[2:] if inmodel == 'dec' else bytes.fromhex(f'{int(c):#08x}'[2:])[::-1].hex() if inmodel == 'rdec' else f'{c[0]:02x}{c[1]:02x}{c[2]:02x}' if inmodel == 'rgb' else hsl_to_hex(*c)[1:] if inmodel == 'hsl' else 'ffffff'
     return f'#{h}' if outmodel == 'hex' else (int(h[i:i+2], 16) for i in (0, 2, 4)) if outmodel == 'rgb' else int(f'0x{h}', 16) if outmodel == 'dec' else int(f'0x{h[4:6] + h[2:4] + h[:2]}', 16) if outmodel == 'rdec' else hex_to_hsl(f'#{h}') if outmodel == 'hsl' else None
     # this seems to be useless: ImageColor.getrgb(f'rgb({c[0]},{c[1]},{c[2]})')
 
-def color_to_hex(colorname: str) -> str:
-    r, g, b = ImageColor.getrgb(colorname)
-    return f'#{r:02x}{g:02x}{b:02x}'
+def color_to_hex(root, colorname: str) -> str:
+    r, g, b = root.winfo_rgb(colorname)
+    return f'#{int(r/257):02x}{int(g/257):02x}{int(b/257):02x}'
 
 def hex_to_hsl(hx: str) -> tuple:
     r, g, b = (int(hx[i:i+2], 16) for i in (1, 3, 5))
@@ -78,7 +77,7 @@ class ColorChooser(ttk.Frame):
     def __init__(self, master, initialcolor=None, padding=None):
         super().__init__(master, padding=padding)
         self.style = ttk.Style(master)
-        self.initialcolor = initialcolor or master['bg']
+        self.initialcolor = color_to_hex(self, initialcolor) if initialcolor else master['bg']
 
         self.tframe = ttk.Frame(self, padding=5)
         self.tframe.pack(fill=X)
@@ -89,14 +88,13 @@ class ColorChooser(ttk.Frame):
         self.notebook.pack(fill=BOTH)
 
         # color variables
-        hx = color_to_hex(self.initialcolor)
         self.hue = IntVar()
         self.sat = IntVar()
         self.lum = IntVar()
         self.red = IntVar()
         self.grn = IntVar()
         self.blu = IntVar()
-        self.hex = StringVar(value=hx)
+        self.hex = StringVar(value=self.initialcolor)
         self.dec = StringVar()
         self.rdec = StringVar()
 
@@ -131,7 +129,7 @@ class ColorChooser(ttk.Frame):
         self.color_entries = self.create_value_inputs(self.bframe)
         self.color_entries.pack(side=RIGHT)
 
-        self.sync_color_values(model='hex', color=hx)
+        self.sync_color_values(model='hex', color=self.initialcolor)
 
 
     def create_spectrum(self, master):
@@ -268,7 +266,7 @@ class ColorChooser(ttk.Frame):
             master=self.preview,
             text='Preview',
             background=self.initialcolor,
-            foreground=contrast_color(*color_to_model(self.hex.get(), 'hex', 'rgb')),
+            foreground=contrast_color(*color_to_model(self.initialcolor, 'hex', 'rgb')),
             width=7
         ) # autostyle=False
         self.preview_lbl.pack(anchor=N, pady=5)
