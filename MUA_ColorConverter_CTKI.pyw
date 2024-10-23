@@ -1,13 +1,18 @@
-from customtkinter import *
 from tkinter import *
 from tkinter import colorchooser, messagebox
+from customtkinter import *
 from colorsys import rgb_to_hls, hls_to_rgb
-from ctypes import windll
 from pathlib import Path
-import darkdetect
+import darkdetect, sys, time
 
-windll.shcore.SetProcessDpiAwareness(2)
-SCALE_FACTOR = windll.shcore.GetScaleFactorForDevice(0) / 100
+TRANSPARENT = 'systemTransparent' if sys.platform.startswith('darwin') else '#010203' # or '#000001'
+if sys.platform.startswith('win'):
+    from ctypes import windll
+    windll.shcore.SetProcessDpiAwareness(2)
+    SCALE_FACTOR = windll.shcore.GetScaleFactorForDevice(0) / 100
+else:
+    SCALE_FACTOR = 1
+
 set_default_color_theme('green')
 
 
@@ -23,9 +28,9 @@ OUTSIDERS_COLORS = [
 ]
 
 
-def color_to_model(c, inmodel=None, outmodel='hex'):
+def color_to_model(c: any, inmodel: str = None, outmodel: str = 'hex'):
     if inmodel == outmodel: return c
-    h = c[1:] if inmodel == 'hex' else f'{int(c):#08x}'[2:] if inmodel == 'dec' else bytes.fromhex(f'{int(c):#08x}'[2:])[::-1].hex() if inmodel == 'rdec' else f'{c[0]:02x}{c[1]:02x}{c[2]:02x}' if inmodel == 'rgb' else hsl_to_hex(*c)[1:] if inmodel == 'hsl' else 'ffffff'
+    h = c[1:] if inmodel == 'hex' else f'{int(c):#08x}'[2:] if inmodel == 'dec' else bytes.fromhex(f'{int(c):#08x}'[2:])[::-1].hex() if inmodel == 'rdec' else f'{int(c[0]):02x}{int(c[1]):02x}{int(c[2]):02x}' if inmodel == 'rgb' else hsl_to_hex(*c)[1:] if inmodel == 'hsl' else 'ffffff'
     return f'#{h}' if outmodel == 'hex' else (int(h[i:i+2], 16) for i in (0, 2, 4)) if outmodel == 'rgb' else int(f'0x{h}', 16) if outmodel == 'dec' else int(f'0x{h[4:6] + h[2:4] + h[:2]}', 16) if outmodel == 'rdec' else hex_to_hsl(f'#{h}') if outmodel == 'hsl' else None
 
 def color_to_hex(root, colorname: str) -> str:
@@ -49,8 +54,19 @@ def rgb_to_decimal(rgb: tuple) -> int:
     decimal_value = (r << 16) | (g << 8) | b
     return decimal_value
 
-def contrast_color(r: int, g: int, b: int, darkcolor='#000', lightcolor='#fff') -> str:
+def contrast_color(r: int, g: int, b: int, darkcolor: str = '#000', lightcolor: str = '#fff') -> str:
     return darkcolor if (((0.299 * r) + (0.587 * g) + (0.114 * b))/255) > 0.5 else lightcolor
+
+def lum_to_alpha(rgb: tuple, l: float, bg: float = 255) -> str:
+    a = min(l * 2.2, 1)
+    ai = 1 - a
+    r, g, b = (min(max(int(bg * ai + c * a), 0), 255) for c in rgb)
+    return f'#{r:02x}{g:02x}{b:02x}'
+
+def blend_subtractive_rdec(rgb: tuple, a: float = 1, bg: float = 255) -> str:
+    # additive (min(int(bg + c * a), 255) for c in rgb)
+    r, g, b = (max(int(bg - c * a), 0) for c in rgb)
+    return int(f'0x{b:02x}{g:02x}{r:02x}', 16)
 
 
 class DecimalColorEntry(CTkEntry):
@@ -159,6 +175,194 @@ class CTkSpinbox(CTkFrame):
         self.entry.delete(0, 'end')
         self.entry.insert(0, str(int(value)))
 
+class CTkToolTip(Toplevel):
+    """
+    https://github.com/Akascape/CTkToolTip
+    Creates a ToolTip (pop-up) widget for customtkinter.
+    """
+
+    def __init__(
+            self,
+            widget: any = None,
+            message: str = None,
+            delay: float = 0.2,
+            follow: bool = True,
+            x_offset: int = +20,
+            y_offset: int = +10,
+            bg_color: str = None,
+            corner_radius: int = 10,
+            border_width: int = 0,
+            border_color: str = None,
+            alpha: float = 0.95,
+            padding: tuple = (10, 2),
+            **message_kwargs):
+
+        super().__init__()
+
+        self.widget = widget
+
+        self.withdraw()
+
+        # Disable ToolTip's title bar
+        self.overrideredirect(True)
+        self.bg_color = bg_color or ThemeManager.theme['CTkFrame']['fg_color']
+
+        if sys.platform.startswith('win'):
+            self.attributes('-transparentcolor', TRANSPARENT)
+            self.transient()
+        elif sys.platform.startswith('darwin'):
+            self.attributes('-transparent', True)
+            self.transient(self.master)
+        else:
+            corner_radius = 0
+            self.transient()
+
+        self.resizable(width=True, height=True)
+
+        # Make the background transparent
+        self.config(background=TRANSPARENT)
+
+        # StringVar instance for msg string
+        self.messageVar = StringVar()
+        self.message = message
+        self.messageVar.set(self.message)
+
+        self.delay = delay
+        self.follow = follow
+        self.x_offset = x_offset
+        self.y_offset = y_offset
+        self.corner_radius = corner_radius
+        self.alpha = alpha
+        self.border_width = border_width
+        self.padding = padding
+        self.tl_color = ThemeManager.theme['CTkToplevel']['fg_color']
+        self.border_color = border_color
+        self.disable = False
+
+        # visibility status of the ToolTip inside|outside|visible
+        self.status = 'outside'
+        self.last_moved = 0
+        self.attributes('-alpha', self.alpha)
+
+        # Add the message widget inside the tooltip
+        self.transparent_frame = Frame(self, bg=TRANSPARENT)
+        self.transparent_frame.pack(padx=0, pady=0, fill=BOTH, expand=True)
+
+        self.frame = CTkFrame(self.transparent_frame,
+                              bg_color=TRANSPARENT,
+                              corner_radius=self.corner_radius,
+                              border_width=self.border_width,
+                              fg_color=self.bg_color,
+                              border_color=self.border_color)
+        self.frame.pack(padx=0, pady=0, fill=BOTH, expand=True)
+
+        self.message_label = CTkLabel(self.frame, textvariable=self.messageVar, **message_kwargs)
+        self.message_label.pack(fill=BOTH, padx=self.padding[0] + self.border_width,
+                                pady=self.padding[1] + self.border_width, expand=True)
+
+        # Add bindings to the widget without overriding the existing ones
+        self.widget.bind('<Enter>', self.on_enter, add='+')
+        self.widget.bind('<Leave>', self.on_leave, add='+')
+        self.widget.bind('<Motion>', self.on_enter, add='+')
+        self.widget.bind('<B1-Motion>', self.on_enter, add='+')
+        self.widget.bind('<Destroy>', lambda _: self.hide(), add='+')
+
+    def show(self) -> None:
+        """
+        Enable the widget.
+        """
+        self.disable = False
+
+    def on_enter(self, event) -> None:
+        """
+        Processes motion within the widget including entering and moving.
+        """
+
+        if self.disable:
+            return
+        self.last_moved = time.time()
+
+        # Set the status as inside for the very first time
+        if self.status == 'outside':
+            self.status = 'inside'
+
+        # If the follow flag is not set, motion within the widget will make the ToolTip dissapear
+        if not self.follow:
+            self.status = 'inside'
+            self.withdraw()
+
+        # Calculate available space on the right side of the widget relative to the screen
+        root_width = self.winfo_screenwidth()
+        widget_x = event.x_root
+        space_on_right = root_width - widget_x
+
+        # Calculate the width of the tooltip's text based on the length of the message string
+        text_width = self.message_label.winfo_reqwidth()
+
+        # Calculate the offset based on available space and text width to avoid going off-screen on the right side
+        offset_x = self.x_offset
+        if space_on_right < text_width + 20:  # Adjust the threshold as needed
+            offset_x = -text_width - 20  # Negative offset when space is limited on the right side
+
+        # Offsets the ToolTip using the coordinates od an event as an origin
+        self.geometry(f'+{event.x_root + offset_x}+{event.y_root + self.y_offset}')
+
+        # Time is in integer: milliseconds
+        self.after(int(self.delay * 1000), self._show)
+
+    def on_leave(self, event=None) -> None:
+        """
+        Hides the ToolTip temporarily.
+        """
+
+        if self.disable: return
+        self.status = 'outside'
+        self.withdraw()
+
+    def _show(self) -> None:
+        """
+        Displays the ToolTip.
+        """
+
+        if not self.widget.winfo_exists():
+            self.hide()
+            self.destroy()
+
+        if self.status == 'inside' and time.time() - self.last_moved >= self.delay:
+            self.status = 'visible'
+            self.deiconify()
+
+    def hide(self) -> None:
+        """
+        Disable the widget from appearing.
+        """
+        if not self.winfo_exists():
+            return
+        self.withdraw()
+        self.disable = True
+
+    def is_disabled(self) -> None:
+        """
+        Return the window state
+        """
+        return self.disable
+
+    def get(self) -> None:
+        """
+        Returns the text on the tooltip.
+        """
+        return self.messageVar.get()
+
+    def configure(self, message: str = None, delay: float = None, bg_color: str = None, **kwargs):
+        """
+        Set new message or configure the label parameters.
+        """
+        if delay: self.delay = delay
+        if bg_color: self.frame.configure(fg_color=bg_color)
+
+        self.messageVar.set(message)
+        self.message_label.configure(**kwargs)
+
 # color picker by TtkBootstrap
 # https://github.com/israel-dryer/ttkbootstrap/tree/master
 class ColorChooser(CTkFrame):
@@ -167,22 +371,24 @@ class ColorChooser(CTkFrame):
     ![](../../assets/dialogs/querybox-get-color.png)    
     """
 
-    def __init__(self, master, initialcolor=None):
+    def __init__(self, master, initialcolor=None, blend_mode=None, textvariable=None):
         super().__init__(master)
         self.initialcolor = color_to_hex(self, initialcolor) if initialcolor else master['bg']
+        self.blend_mode = blend_mode or 'alpha'
+        self.textvariable = textvariable
 
         self.tframe = CTkFrame(self)
         self.tframe.pack(fill=X)
         self.bframe = CTkFrame(self)
         self.bframe.pack(fill=X)
 
-        self.notebook = CTkTabview(self.tframe, anchor=NW)
-        self.notebook.pack(fill=BOTH)
-        self.notebook.add('Advanced')
-        self.notebook.add('Standard')
-        self.notebook.add('Outsider')
-        self.notebook.add('More...')
-        self.bg_color = self.notebook.cget('fg_color')
+        self.tabview = CTkTabview(self.tframe, anchor=NW)
+        self.tabview.pack(fill=BOTH)
+        self.tabview.add('Advanced')
+        self.tabview.add('Standard')
+        self.tabview.add('Outsider')
+        self.tabview.add('More...')
+        self.bg_color = self.tabview.cget('fg_color')
         self.tframe.configure(fg_color=self.bg_color)
         self.bframe.configure(fg_color=self.bg_color)
 
@@ -205,16 +411,16 @@ class ColorChooser(CTkFrame):
         self.spectrum_point = 12
 
         # build widgets
-        spectrum_frame = CTkFrame(self.notebook.tab('Advanced'))
+        spectrum_frame = CTkFrame(self.tabview.tab('Advanced'))
         spectrum_frame.grid()
         self.color_spectrum = self.create_spectrum(spectrum_frame)
         self.color_spectrum.pack(fill=X, expand=YES, side=TOP)
         self.standard_swatches = self.create_swatches(
-            self.notebook.tab('Standard'), STD_COLORS).grid()
+            self.tabview.tab('Standard'), STD_COLORS).grid()
         self.outsider_swatches = self.create_swatches_ns(
-            self.notebook.tab('Outsider'), OUTSIDERS_COLORS).grid()
-        self.more = CTkFrame(self.notebook.tab('More...'))
-        self.notebook.configure(command=self.os_colorchooser)
+            self.tabview.tab('Outsider'), OUTSIDERS_COLORS).grid()
+        self.more = CTkFrame(self.tabview.tab('More...'))
+        self.tabview.configure(command=self.os_colorchooser)
         self.luminance_scale = self.create_luminance_scale(self.tframe)
         self.luminance_scale.pack(fill=X, padx=8, pady=(0, 8))
 
@@ -343,33 +549,57 @@ class ColorChooser(CTkFrame):
         container = CTkFrame(master=master, fg_color=self.bg_color)
 
         # the frame and label for the new color
-        self.preview = CTkFrame(
-            master=container,
-            bg_color=self.bg_color,
-            border_width=2,
-            fg_color=self.initialcolor
-        )
-        self.preview.pack(side=TOP, fill=BOTH, expand=YES, padx=(5, 0))
-        self.preview_lbl = CTkLabel(
-            master=self.preview,
-            text='Preview',
-            fg_color=self.initialcolor,
-            text_color=contrast_color(*color_to_model(self.initialcolor, 'hex', 'rgb')),
-            width=7
-        )
-        self.preview_lbl.pack(anchor=N, pady=5)
+        if self.blend_mode == 'alpha':
+            self.preview = CTkFrame(
+                master=container,
+                bg_color=self.bg_color,
+                border_width=2
+            )
+            self.preview.pack(side=TOP, fill=BOTH, expand=YES, padx=(5, 0))
+            self.preview_lbl = CTkLabel(
+                master=self.preview,
+                text='Preview',
+                width=7
+            )
+            self.preview_lbl.pack(anchor=N, pady=5)
+        else:
+            cb_preview = CTkFrame(
+                master=container,
+                bg_color=self.bg_color
+            )
+            cb_preview.pack(side=TOP, fill=BOTH, expand=YES, padx=(6, 0))
+            s = int(20 * SCALE_FACTOR)
+            d = int(240 * SCALE_FACTOR)
+            self.checkerboard = Canvas(
+                cb_preview,
+                highlightbackground=self.bg_color[0],
+                width=d,
+                height=d
+            )
+            for xi, x in enumerate(range(0, d, s)):
+                for yi, y in enumerate(range(0, d, s)):
+                    self.checkerboard.create_rectangle(x, y, x+s, y+s, width=0, tags=['cb_light' if (xi + yi) % 2 else 'cb_dark'])
+            self.checkerboard.place(relwidth=1, relheight=1)
+
+            if sys.platform.startswith('win'):
+                cb_border = CTkFrame(cb_preview, border_width=3, fg_color=TRANSPARENT)
+                cb_border.place(relwidth=1, relheight=1)
+                hwnd = cb_border.winfo_id()
+                new_exstyle = windll.user32.GetWindowLongA(hwnd, -20) | 0x00080000  # WS_EX_LAYERED
+                windll.user32.SetWindowLongA(hwnd, -20, new_exstyle)  # GWL_EXSTYLE
+                windll.user32.SetLayeredWindowAttributes(hwnd, int(TRANSPARENT[-2:] + TRANSPARENT[-4:-2] + TRANSPARENT[-6:-4], 16), 255, 0x00000001)  # LWA_COLORKEY = 0x00000001
 
         # Decimal fields
         decimals = CTkFrame(master=container, bg_color=self.bg_color, fg_color=self.bg_color)
         decimals.pack(anchor=SE, padx=(2, 0))
         ent_dec = DecimalColorEntry(decimals, width=80, textvariable=self.dec)
-        ent_dec.grid(row=2, column=1, padx=2, pady=2, sticky=EW)
+        ent_dec.grid(row=0, column=1, padx=2, pady=2, sticky=EW)
         ent_rdec = DecimalColorEntry(decimals, width=80, textvariable=self.rdec, border_width=3, border_color='indianred')
-        ent_rdec.grid(row=3, column=1, padx=2, pady=2, sticky=EW)
+        ent_rdec.grid(row=1, column=1, padx=2, pady=2, sticky=EW)
         
         lbl_cnf = {'master': decimals, 'anchor': E}
-        CTkLabel(**lbl_cnf, text='Decimal RGB').grid(row=2, column=0, sticky=E)
-        CTkLabel(**lbl_cnf, text='Decimal BGR', font=CTkFont(weight='bold')).grid(row=3, column=0, sticky=E)
+        CTkLabel(**lbl_cnf, text='Decimal RGB').grid(row=0, column=0, sticky=E)
+        CTkLabel(**lbl_cnf, text='Decimal BGR', font=CTkFont(weight='bold')).grid(row=1, column=0, sticky=E)
         for sequence in ['<Return>', '<KP_Enter>']:
             ent_dec.bind(
                 sequence=sequence,
@@ -381,6 +611,8 @@ class ColorChooser(CTkFrame):
                 command=lambda _: self.sync_color_values('rdec'),
                 add='+'
             )
+        self.update()
+        if self.blend_mode != 'alpha': cb_preview.configure(height=decimals.winfo_height() / SCALE_FACTOR, width=decimals.winfo_width() / SCALE_FACTOR)
 
         return container
 
@@ -448,6 +680,7 @@ class ColorChooser(CTkFrame):
         so that all color models remain in sync."""
         if not color:
             color = self.hex.get() if model == 'hex' else self.dec.get() if model == 'dec' else self.rdec.get() if model == 'rdec' else (self.red.get(), self.grn.get(), self.blu.get()) if model == 'rgb' else (self.hue.get(), self.sat.get(), self.lum.get()) if model == 'hsl' else None
+        if self.blend_mode == 'subtractive' and model == 'rdec': color = blend_subtractive_rdec(color_to_model(color, model, 'rgb'))
         h, s, l = color_to_model(color, model, 'hsl')
         r, g, b = color_to_model(color, model, 'rgb')
         hx = color_to_model(color, model, 'hex')
@@ -460,10 +693,18 @@ class ColorChooser(CTkFrame):
         self.blu.set(b)
         self.hex.set(hx)
         self.dec.set(color_to_model(color, model, 'dec'))
-        self.rdec.set(color_to_model(color, model, 'rdec'))
+        self.rdec.set(blend_subtractive_rdec((r, g, b)) if self.blend_mode == 'subtractive' else color_to_model(color, model, 'rdec'))
         # update the preview fields
-        self.preview.configure(fg_color=hx)
-        self.preview_lbl.configure(fg_color=hx, text_color=contrast)
+        if self.blend_mode == 'alpha':
+            self.preview.configure(fg_color=hx)
+            self.preview_lbl.configure(fg_color=hx, text_color=contrast)
+        else:
+            bl = 1 - l/100 if self.blend_mode == 'subtractive' else l/100
+            self.checkerboard.itemconfigure('cb_dark', fill=lum_to_alpha((r,g,b), bl, 200))
+            self.checkerboard.itemconfigure('cb_light', fill=lum_to_alpha((r,g,b), bl, 235))
+
+        # Update instructions
+        self.textvariable.set(f'Recommended blend mode:\nNo alpha (black BG): {'subtractive' if l < 50 else 'additive'}\nAlpha (transparent BG): alpha')
 
         # move luminance indicator to the new location
         x = int(l / 100 * self.spectrum_width) - \
@@ -474,10 +715,10 @@ class ColorChooser(CTkFrame):
             # update luminance indicator with new color
             width = self.spectrum_width
             for x, l in enumerate(range(0, width, self.spectrum_point)):
-                self.luminance_scale.itemconfig(f'color{x}', fill=hsl_to_hex(h, s, l/width*100))
+                self.luminance_scale.itemconfigure(f'color{x}', fill=hsl_to_hex(h, s, l/width*100))
             # move spectrum indicator to the new color location
             self.color_spectrum.moveto('spectrum-indicator', *self.coords_from_color(h, s))
-            self.color_spectrum.itemconfig('spectrum-indicator', outline=contrast)
+            self.color_spectrum.itemconfigure('spectrum-indicator', outline=contrast)
 
     def on_press_swatch(self, event):
         """Update the widget colors when a color swatch is clicked."""
@@ -498,9 +739,9 @@ class ColorChooser(CTkFrame):
         self.sync_color_values(model='hsl', lum_only=True)
 
     def os_colorchooser(self, event=None):
-        name = self.notebook.get()
+        name = self.tabview.get()
         if name == 'More...':
-            self.notebook.set('Advanced')
+            self.tabview.set('Advanced')
             rgb_color = colorchooser.askcolor(self.hex.get())[0]
             if rgb_color:
                 self.sync_color_values(model='rgb', color=rgb_color)
@@ -514,46 +755,88 @@ class App(CTk):
         # self.geometry(f'{size[0]}x{size[1]}')
         # self.minsize(size[0], size[1])
 
-        self.tcolorchooser = ColorChooser(self, SAVED_COLOR) # initial color
-        self.tcolorchooser.pack(fill=BOTH, expand=YES)
+        self.instructions = StringVar()
 
-        self.fix_theme('System')
+        self.top = CTkFrame(self, fg_color='transparent')
+        self.top.pack()
+        middle = CTkFrame(self, corner_radius=0)
+        middle.pack(fill=X)
+        bottom = CTkFrame(self, corner_radius=0)
+        bottom.pack(fill=X)
 
-        self.bottom = CTkFrame(self, corner_radius=0)
-        self.bottom.pack(fill=X)
-        self.copy_button = CTkButton(self.bottom, text='Copy to Clipboard', command=self.on_copy_click)
-        self.copy_button.pack(side=LEFT, padx=10, pady=10)
+        self.color_chooser = ColorChooser(self.top, initialcolor=SAVED_COLOR, textvariable=self.instructions)
+        self.color_chooser.pack(fill=BOTH, expand=YES)
 
-        self.theme_option = CTkOptionMenu(
-            self.bottom,
+        copy_button = CTkButton(middle, text='Copy to Clipboard', command=self.on_copy_click)
+        copy_button.pack(side=LEFT, padx=10, pady=10)
+
+        blendmode = CTkOptionMenu(
+            middle,
+            values=['alpha', 'alphaadditive', 'additive', 'subtractive'],
+            command=self.switch_blendmode
+        ).pack(side=RIGHT, padx=10, pady=10)
+        blendmode_label = CTkLabel(
+            middle,
+            text='Change blend mode'
+        ).pack(side=RIGHT, padx=10, pady=10)
+
+        instructions_label = CTkLabel(
+            bottom,
+            textvariable=self.instructions,
+            font=CTkFont(size=11),
+            justify=LEFT,
+            wraplength=160
+        )
+        instructions_label.pack(side=LEFT, padx=10, pady=5)
+
+        instructions_tt = CTkToolTip(
+            instructions_label,
+            follow=False,
+            justify=LEFT,
+            message="alpha:\nWorks best with textures that have a transparent background (black backgrounds stay black). The chosen color will always appear correctly, but with bright colors (luminance 50+), the texture color blends through (e.g. with a bright red color a blue texture will become purple, a white texture will stay bright red).\n\nadditive:\nWorks best with textures that have a black background. When using textures with transparent backgrounds, the alpha channel will be inverted. Dark colors will blend with the background, resulting in low visibility (invisibility when the color is black).\n\nalphaadditive:\nWorks with any texture, but dark colors will blend with the background, resulting in low visibility (invisibility when the color is black).\n\nsubtractive:\nWorks best with textures that have a black background. When using textures with transparent backgrounds, the alpha channel will be inverted. Light colors will blend with the background, resulting in low visibility (invisibility when the color is white).",
+            y_offset=-430,
+            wraplength=430
+        )
+
+        theme_option = CTkOptionMenu(
+            bottom,
             values=['System', 'Light', 'Dark'],
             command=self.switch_theme
-        )
-        self.theme_option.pack(side=RIGHT, padx=10, pady=10)
-        self.theme_label = CTkLabel(
-            self.bottom,
+        ).pack(side=RIGHT, padx=10, pady=10)
+        theme_label = CTkLabel(
+            bottom,
             text='Change theme'
-        )
-        self.theme_label.pack(side=RIGHT, padx=10, pady=10)
+        ).pack(side=RIGHT, padx=10, pady=10)
+
+        self.current_theme = 'System'
+        self.fix_theme(self.current_theme)
 
     def switch_theme(self, theme: str):
-        set_appearance_mode(theme) # Modes: "System" (standard), "Dark", "Light"
+        self.current_theme = theme
+        set_appearance_mode(theme) # Modes: 'System' (standard), 'Dark', 'Light'
         self.fix_theme(theme)
 
     def fix_theme(self, theme: str):
         if theme == 'System': theme = darkdetect.theme()
-        c = self.tcolorchooser.notebook.cget('fg_color')[1 if theme == 'Dark' else 0]
-        self.tcolorchooser.color_spectrum.configure(highlightbackground=c, background=c)
-        self.tcolorchooser.luminance_scale.configure(highlightbackground=c, background=c)
+        c = self.color_chooser.tabview.cget('fg_color')[1 if theme == 'Dark' else 0]
+        self.color_chooser.color_spectrum.configure(highlightbackground=c, background=c)
+        self.color_chooser.luminance_scale.configure(highlightbackground=c, background=c)
+
+    def switch_blendmode(self, blend_mode: str):
+        SAVED_COLOR = self.color_chooser.hex.get()
+        self.color_chooser.destroy()
+        self.color_chooser = ColorChooser(self.top, initialcolor=SAVED_COLOR, blend_mode=blend_mode, textvariable=self.instructions)
+        self.color_chooser.pack(side=TOP, fill=BOTH, expand=YES)
+        self.fix_theme(self.current_theme)
 
     def on_copy_click(self):
         self.clipboard_clear()
-        self.clipboard_append(self.tcolorchooser.rdec.get())
+        self.clipboard_append(self.color_chooser.rdec.get())
         self.update()
         messagebox.showinfo('Copy Success', 'BGR Decimal Value copied to clipboard!')
 
 if __name__ == '__main__':
-    app = App('RGB to Decimal BGR Color Picker')
+    app = App('Decimal BGR Color Picker')
     app.mainloop()
 
 """
@@ -561,7 +844,7 @@ class App(CTkFrame):
     def __init__(self, master, change_colors):
         super().__init__(master=master)
         self.color_option = CTkOptionMenu(
-            self.bottom,
+            middle,
             width=120,
             values=['green', 'blue', 'dark-blue'],
             command=change_colors
@@ -580,7 +863,7 @@ class AppWrapper(CTk):
     def change_colors(self, theme: str):
         set_default_color_theme(theme)
         global SAVED_COLOR
-        SAVED_COLOR = self.app.tcolorchooser.hex.get()
+        SAVED_COLOR = self.app.color_chooser.hex.get()
         self.app.destroy()
         self.app = App(self, self.change_colors)
         self.app.pack(expand=True, fill=BOTH)

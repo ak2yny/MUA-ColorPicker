@@ -6,22 +6,22 @@ VSVersionInfo(
   ffi=FixedFileInfo(
     # filevers and prodvers should be always a tuple with four items: (1, 2, 3, 4)
     # Set not needed items to zero 0.
-    filevers=(1, 0, 1, 0),
-    prodvers=(1, 0, 1, 0),
+    filevers=(1, 1, 0, 0),
+    prodvers=(1, 1, 0, 0),
     ),
   kids=[
     StringFileInfo(
       [
       StringTable(
         '040904B0',
-        [StringStruct('FileVersion', '1.0'),
+        [StringStruct('FileVersion', '1.1'),
         StringStruct('CompanyName', 'ak2yny'),
         StringStruct('FileDescription', 'Color picker with reverse decimal value for MUA and XML games'),
         StringStruct('OriginalFilename', 'MUA_ColorConverter.py'),
         StringStruct('InternalName', 'MUA_ColorConverter'),
         StringStruct('LegalCopyright', '2024'),
         StringStruct('ProductName', 'MUA Color Converter'),
-        StringStruct('ProductVersion', '1.0')])
+        StringStruct('ProductVersion', '1.1')])
       ]), 
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]
