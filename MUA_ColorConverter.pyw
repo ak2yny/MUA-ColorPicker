@@ -47,8 +47,7 @@ def hsl_to_hex(h: float, s: float, l: float) -> str:
 
 def rgb_to_decimal(rgb: tuple) -> int:
     r, g, b = rgb
-    decimal_value = (r << 16) | (g << 8) | b
-    return decimal_value
+    return (r << 16) | (g << 8) | b
 
 def contrast_color(r: int, g: int, b: int, darkcolor: str = '#000', lightcolor: str = '#fff') -> str:
     return darkcolor if (((0.299 * r) + (0.587 * g) + (0.114 * b))/255) > 0.5 else lightcolor
